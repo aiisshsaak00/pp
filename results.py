@@ -12,7 +12,7 @@ api_secret = os.getenv("BINANCE_API_SECRET")
 
 def calculate_A(balance3, n):
     B = balance3 / (2**(n + 1) - 1)
-    A = [int(B * 2**i) for i in range(n+1 )]
+    A = [int(B * 2**i) for i in range(n+1)]
     return A
 
 no_position3 = True
@@ -45,15 +45,24 @@ crypto = TA_Handler(
 def get_binance_historical_data(symbol, interval, end_time, limit=1000):
     start_time = end_time - timedelta(minutes=30)
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval={interval}&startTime={int(start_time.timestamp())*1000}&endTime={int(end_time.timestamp())*1000}&limit={limit}"
-    response = requests.get(url)
-    if response.status_code == 200:
-        data = response.json()
-        df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'])
-        df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
-        df.set_index('timestamp', inplace=True)
-        return df
-    else:
-        print("Error:", response.status_code)
+    
+    try:
+        response = requests.get(url, timeout=10)  # Adding a timeout to avoid hanging
+        if response.status_code == 200:
+            data = response.json()
+            if data:
+                df = pd.DataFrame(data, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume', 'close_time', 'quote_asset_volume', 'number_of_trades', 'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume', 'ignore'])
+                df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+                df.set_index('timestamp', inplace=True)
+                return df
+            else:
+                print("No data returned.")
+                return None
+        else:
+            print(f"Error fetching data: {response.status_code}")
+            return None
+    except requests.exceptions.RequestException as e:
+        print(f"Network error: {e}")
         return None
 
 def log_trade(message):
@@ -77,58 +86,64 @@ while True:
         historical_data = get_binance_historical_data(symbol, interval, end_time)
         historical_data_15 = get_binance_historical_data(symbol, '15m', end_time)
         
-        candle = historical_data.iloc[-2]
-        candle_15 = historical_data_15.iloc[-2]
+        # Check if data is valid before proceeding
+        if historical_data is not None and historical_data_15 is not None:
+            candle = historical_data.iloc[-2]
+            candle_15 = historical_data_15.iloc[-2]
 
-        SMA10 = crypto.get_analysis().indicators['SMA10']
-        STOCH = crypto.get_analysis().indicators['Stoch.K']
-        volumes = crypto.get_analysis().indicators['volume']
-        
-        bclient = Client(api_key, api_secret, testnet=False) 
-        symbol_info = bclient.get_ticker(symbol="PEPEUSDT")
-        price = float(symbol_info['askPrice'])
+            SMA10 = crypto.get_analysis().indicators['SMA10']
+            STOCH = crypto.get_analysis().indicators['Stoch.K']
+            volumes = crypto.get_analysis().indicators['volume']
 
-        current_time_epoch = int(time.time())
-        formatted_date_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_time_epoch))
-        
-        chang = round(((float(candle['close']) - float(candle['open'])) / float(candle['open'])) * 100, 8)
-        chang_15 = round(((float(candle_15['close']) - float(candle_15['open'])) / float(candle_15['open'])) * 100, 8)
+            bclient = Client(api_key, api_secret, testnet=False) 
+            symbol_info = bclient.get_ticker(symbol="PEPEUSDT")
+            price = float(symbol_info['askPrice'])
 
-        time.sleep(5)  # Sleep between loops
+            current_time_epoch = int(time.time())
+            formatted_date_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(current_time_epoch))
 
-        # Buying logic
-        if no_position3 and buy_condition3(SMA10):
-            print('Entry found.')
-            buy_price3 = price
-            inv1 = calculate_A(balance3, n)[0]
-            total_invst = inv1
-            coins3 = int((inv1 - inv1 * 0.001) / buy_price3)
-            balance3 -= inv1
-            log_trade(f"{formatted_date_time}: Buy condition met. Price: {price:.8f} STOCH: {STOCH:.2f} Chag: {chang:.2f} Amount: {balance3:.2f} Total_Invt: {total_invst:.2f}")
-            no_position3 = False
-            buy1 = False
-            buy2 = True
-        
-        if sell_condition3(buy_price3, SMA10, price, coins3, total_invst) and chang_15 >= 0.8:
-            print('Sold.')
-            message = True
-            sell_price3 = price
-            balance3 += coins3 * 0.999 * price
-            coins3 = 0
-            no_position3 = True
-            buy1 = True
-            buy2 = False
-            log_trade(f"{formatted_date_time}: Sell condition met. Price: {price:.8f} STOCH: {STOCH:.2f} Chag: {chang_15:.2f} Amount: {balance3:.2f} Total_Invt: {total_invst:.2f}")
-            # Track win/loss logic
-            if sell_price3 <= buy_price3:
-                trade_loss3 += 1
-            else:
-                trade_won3 += 1
+            chang = round(((float(candle['close']) - float(candle['open'])) / float(candle['open'])) * 100, 8)
+            chang_15 = round(((float(candle_15['close']) - float(candle_15['open'])) / float(candle_15['open'])) * 100, 8)
 
-        if no_position3 and message:
-            print("Waiting for entry...")
+            time.sleep(5)  # Sleep between loops
 
-        time.sleep(60)  # Delay to avoid excessive API calls
+            # Buying logic
+            if no_position3 and buy_condition3(SMA10):
+                print('Entry found.')
+                buy_price3 = price
+                inv1 = calculate_A(balance3, n)[0]
+                total_invst = inv1
+                coins3 = int((inv1 - inv1 * 0.001) / buy_price3)
+                balance3 -= inv1
+                log_trade(f"{formatted_date_time}: Buy condition met. Price: {price:.8f} STOCH: {STOCH:.2f} Chag: {chang:.2f} Amount: {balance3:.2f} Total_Invt: {total_invst:.2f}")
+                no_position3 = False
+                buy1 = False
+                buy2 = True
+
+            if sell_condition3(buy_price3, SMA10, price, coins3, total_invst) and chang_15 >= 0.8:
+                print('Sold.')
+                message = True
+                sell_price3 = price
+                balance3 += coins3 * 0.999 * price
+                coins3 = 0
+                no_position3 = True
+                buy1 = True
+                buy2 = False
+                log_trade(f"{formatted_date_time}: Sell condition met. Price: {price:.8f} STOCH: {STOCH:.2f} Chag: {chang_15:.2f} Amount: {balance3:.2f} Total_Invt: {total_invst:.2f}")
+                # Track win/loss logic
+                if sell_price3 <= buy_price3:
+                    trade_loss3 += 1
+                else:
+                    trade_won3 += 1
+
+            if no_position3 and message:
+                print("Waiting for entry...")
+
+            time.sleep(60)  # Delay to avoid excessive API calls
+
+        else:
+            print("Skipping iteration due to no data.")
+            time.sleep(60)
 
     except Exception as e:
         print("An error occurred while fetching analysis:", e)
